@@ -20,7 +20,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Pre-build Checks
+
   pre-build:
     runs-on: ubuntu-latest
     continue-on-error: true
@@ -40,7 +40,6 @@ jobs:
           npm install -g prettier
           prettier --check "**/*.{js,jsx,ts,tsx,css,md}"
 
-  # Static Code Analysis
   code-analysis:
     needs: pre-build
     runs-on: ubuntu-latest
@@ -69,7 +68,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # Security Scanning
   security-scan:
     needs: code-analysis
     runs-on: ubuntu-latest
@@ -89,7 +87,6 @@ jobs:
           project: 'Airbnb Clone'
           path: 'api'
 
-  # Build and Test
   build-test:
     needs: security-scan
     runs-on: ubuntu-latest
@@ -107,9 +104,8 @@ jobs:
           cd api
           npm test
 
-  # Container Security Scan
   container-scan:
-    needs: security-scan
+    needs: build-test
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
@@ -178,7 +174,6 @@ jobs:
             UnblendedCost
             UsageQuantity
 
-  # AWS Deployment
   aws-deploy:
     needs: container-scan
     runs-on: ubuntu-latest
@@ -215,7 +210,37 @@ jobs:
           distribution-id: ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }}
           paths: '/*'
 
-  # Post-Build Analysis
+  infrastructure:
+    needs: container-scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Plan
+        run: terraform plan
+
+      - name: Terraform Apply
+        if: github.ref == 'refs/heads/main'
+        run: terraform apply -auto-approve
+
+  deploy:
+    needs: infrastructure
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Deploy to Kubernetes
+        uses: Azure/k8s-deploy@v1
+        with:
+          k8s-context: ${{ secrets.K8S_CONTEXT }}
+          namespace: airbnb
+          manifests: |
+            k8s/manifests/api-deployment.yaml
+            k8s/manifests/client-deployment.yaml
+
   post-build:
     needs: container-scan
     runs-on: ubuntu-latest
@@ -274,36 +299,3 @@ jobs:
         run: |
           docker push airbnb-api:latest
           docker push airbnb-client:latest
-
-  # Infrastructure as Code
-  infrastructure:
-    runs-on: ubuntu-latest
-    needs: container-scan
-    steps:
-      - uses: actions/checkout@v3
-
-      - name: Terraform Init
-        run: terraform init
-
-      - name: Terraform Plan
-        run: terraform plan
-
-      - name: Terraform Apply
-        if: github.ref == 'refs/heads/main'
-        run: terraform apply -auto-approve
-
-  # Deployment
-  deploy:
-    runs-on: ubuntu-latest
-    needs: infrastructure
-    steps:
-      - uses: actions/checkout@v3
-
-      - name: Deploy to Kubernetes
-        uses: Azure/k8s-deploy@v1
-        with:
-          k8s-context: ${{ secrets.K8S_CONTEXT }}
-          namespace: airbnb
-          manifests: |
-            k8s/manifests/api-deployment.yaml
-            k8s/manifests/client-deployment.yaml
