@@ -237,42 +237,6 @@ jobs:
           echo "::set-output name=build_time::${{ github.event.processing_time }}"
           echo "::set-output name=artifact_size::$(du -sh api/ client/ | cut -f1 | paste -sd+ - | bc)"
 
-      - name: Notify on Failure
-        if: ${{ failure() }}
-        uses: actions/github-script@v6
-        with:
-          script: |
-            const context = context
-            const payload = {
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title: `Build Failed: ${context.payload.pull_request?.title || context.payload.head_ref || 'Unknown'}`,
-              body: `The build has failed. Check the logs for details.\n\nJob: ${context.job}\nRun ID: ${context.runId}`
-            }
-            await github.rest.issues.createComment(payload)
-
-      - name: Send Teams Notification
-        if: ${{ always() }}
-        uses: pnp/teams@v1
-        with:
-          webhookUrl: ${{ secrets.TEAMS_WEBHOOK_URL }}
-          message: |
-            Build Status: ${{ job.status }}
-            Author: ${{ github.actor }}
-            Job: ${{ context.job }}
-            Run ID: ${{ context.runId }}
-            
-            ${context.payload.pull_request?.title || context.payload.head_ref || 'Unknown'}
-            
-            [View Build Details](https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})
-          themeColor: |
-            if (context.status === 'success') {
-              return '#00FF00'
-            } else if (context.status === 'failure') {
-              return '#FF0000'
-            } else {
-              return '#FFFF00'
-
       - name: Docker Login
         uses: docker/login-action@v2
         with:
