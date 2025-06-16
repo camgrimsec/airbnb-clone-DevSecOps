@@ -1,0 +1,310 @@
+name: DevSecOps Pipeline
+
+on:
+  push:
+    branches: [ main ]
+    tags:
+      - 'v*'
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+  pull_request:
+    branches: [ main ]
+    types: [opened, synchronize, reopened]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Pre-build Checks
+  pre-build:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+      - name: Check for Malicious Files
+        uses: github/codeql-action/analyze@v2
+        continue-on-error: true
+        with:
+          queries: security-extended
+      - name: Check Code Formatting
+        run: |
+          cd client
+          npm install -g prettier
+          prettier --check "**/*.{js,jsx,ts,tsx,css,md}"
+
+  # Static Code Analysis
+  code-analysis:
+    needs: pre-build
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v3
+      - name: Cache Node Modules
+        uses: actions/cache@v3
+        with:
+          path: |
+            api/node_modules
+            client/node_modules
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+
+jobs:
+  # Static Code Analysis
+  code-analysis:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: ESLint
+        run: |
+          cd client
+          npm install
+          npm run lint
+      - name: SonarQube
+        uses: SonarSource/sonarqube-scan-action@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Security Scanning
+  security-scan:
+    runs-on: ubuntu-latest
+    needs: code-analysis
+    steps:
+      - uses: actions/checkout@v3
+      - name: Snyk Security Scan
+        uses: snyk/actions/node@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --severity-threshold=high
+      - name: OWASP Dependency Check
+        uses: dependency-check/dependency-check-action@v1
+        with:
+          project: 'Airbnb Clone'
+          path: 'api'
+
+  # Build and Test
+  build-test:
+    runs-on: ubuntu-latest
+    needs: security-scan
+    steps:
+      - uses: actions/checkout@v3
+      - name: Build API
+        run: |
+          cd api
+          npm install
+          npm run build
+      - name: Test API
+        run: |
+          cd api
+          npm test
+
+  # Container Security Scan
+  container-scan:
+    runs-on: ubuntu-latest
+    needs: security-scan
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v3
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Build and Push to ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-registry.outputs.registry }}
+          ECR_REPOSITORY: airbnb-clone
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:api -f api/Dockerfile .
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:client -f client/Dockerfile .
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:api
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:client
+
+      # AWS Security Scanning
+      - name: Run AWS Inspector
+        uses: aws-actions/run-inspector@v1
+        with:
+          scan-type: 'ECR'
+          ecr-repositories: |
+            ${{ env.ECR_REPOSITORY }}
+
+      # AWS Security Hub Integration
+      - name: Enable Security Hub
+        uses: aws-actions/security-hub-enable@v1
+        with:
+          aws-region: us-east-1
+
+      - name: Run AWS Security Hub Scan
+        uses: aws-actions/security-hub-scan@v1
+        with:
+          aws-region: us-east-1
+          findings-threshold: 10
+
+      # AWS Compliance Checks
+      - name: Run AWS Config Rules
+        uses: aws-actions/config-rules@v1
+        with:
+          aws-region: us-east-1
+          rules: |
+            ecr-image-scanning-enabled
+            ecr-repository-lifecycle-policy-enabled
+            ecr-repository-scanning-enabled
+
+      # AWS Security Best Practices
+      - name: Run AWS Trusted Advisor
+        uses: aws-actions/trusted-advisor@v1
+        with:
+          aws-region: us-east-1
+          checks: |
+            ECR Image Scanning
+            ECR Repository Lifecycle Policy
+            ECR Repository Scanning
+
+      # AWS Cost Optimization
+      - name: Run AWS Cost Explorer
+        uses: aws-actions/cost-explorer@v1
+        with:
+          aws-region: us-east-1
+          time-period: '30'
+          metrics: |
+            UnblendedCost
+            UsageQuantity
+
+  # AWS Deployment
+  aws-deploy:
+    needs: container-scan
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    continue-on-error: true
+    steps:
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Deploy to ECS
+        uses: aws-actions/ecs-deploy@v1
+        with:
+          service: airbnb-service
+          cluster: airbnb-cluster
+          task-definition: ecs-task-definition.json
+          container-name: api
+          container-image: ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:api
+
+      - name: Deploy Client to S3
+        uses: aws-actions/s3-upload@v1
+        with:
+          bucket: airbnb-website
+          source: client/build
+          region: us-east-1
+          acl: public-read
+
+      - name: Invalidate CloudFront Cache
+        uses: aws-actions/cloudfront-invalidate@v1
+        with:
+          distribution-id: ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }}
+          paths: '/*'
+
+  # Post-Build Analysis
+  post-build:
+    needs: container-scan
+    runs-on: ubuntu-latest
+    if: ${{ always() }}
+    continue-on-error: true
+    steps:
+      - name: Collect Metrics
+        run: |
+          # Collect build metrics and performance data
+          echo "::set-output name=build_time::${{ github.event.processing_time }}"
+          echo "::set-output name=artifact_size::$(du -sh api/ client/ | cut -f1 | paste -sd+ - | bc)"
+
+      - name: Notify on Failure
+        if: ${{ failure() }}
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const context = context
+            const payload = {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Build Failed: ${context.payload.pull_request?.title || context.payload.head_ref || 'Unknown'}`,
+              body: `The build has failed. Check the logs for details.\n\nJob: ${context.job}\nRun ID: ${context.runId}`
+            }
+            await github.rest.issues.createComment(payload)
+
+      - name: Send Teams Notification
+        if: ${{ always() }}
+        uses: pnp/teams@v1
+        with:
+          webhookUrl: ${{ secrets.TEAMS_WEBHOOK_URL }}
+          message: |
+            Build Status: ${{ job.status }}
+            Author: ${{ github.actor }}
+            Job: ${{ context.job }}
+            Run ID: ${{ context.runId }}
+            
+            ${context.payload.pull_request?.title || context.payload.head_ref || 'Unknown'}
+            
+            [View Build Details](https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})
+          themeColor: |
+            if (context.status === 'success') {
+              return '#00FF00'
+            } else if (context.status === 'failure') {
+              return '#FF0000'
+            } else {
+              return '#FFFF00'
+            }
+      - name: Docker Login
+        uses: docker/login-action@v2
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      - name: Push Docker Images
+        run: |
+          docker push airbnb-api:latest
+          docker push airbnb-client:latest
+
+  # Infrastructure as Code
+  infrastructure:
+    runs-on: ubuntu-latest
+    needs: containerize
+    steps:
+      - uses: actions/checkout@v3
+      - name: Terraform Init
+        run: |
+          terraform init
+      - name: Terraform Plan
+        run: |
+          terraform plan
+      - name: Terraform Apply
+        if: github.ref == 'refs/heads/main'
+        run: |
+          terraform apply -auto-approve
+
+  # Deployment
+  deploy:
+    runs-on: ubuntu-latest
+    needs: infrastructure
+    steps:
+      - uses: actions/checkout@v3
+      - name: Deploy to Kubernetes
+        uses: Azure/k8s-deploy@v1
+        with:
+          k8s-context: ${{ secrets.K8S_CONTEXT }}
+          namespace: airbnb
+          manifests: |
+            k8s/manifests/api-deployment.yaml
+            k8s/manifests/client-deployment.yaml
