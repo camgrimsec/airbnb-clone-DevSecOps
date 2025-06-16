@@ -1,6 +1,6 @@
 name: DevSecOps Pipeline
 
-on:
+"on":
   push:
     branches: [ main ]
 
@@ -12,6 +12,11 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v3
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v2
+        with:
+          languages: javascript
 
       - name: Check for Malicious Files
         uses: github/codeql-action/analyze@v2
@@ -103,9 +108,13 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
 
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+
       - name: Build and Push to ECR
         env:
-          ECR_REGISTRY: ${{ steps.login-registry.outputs.registry }}
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           ECR_REPOSITORY: airbnb-clone
           IMAGE_TAG: ${{ github.sha }}
         run: |
