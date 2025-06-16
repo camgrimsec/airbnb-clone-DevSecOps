@@ -27,11 +27,13 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v3
+
       - name: Check for Malicious Files
         uses: github/codeql-action/analyze@v2
         continue-on-error: true
         with:
           queries: security-extended
+
       - name: Check Code Formatting
         run: |
           cd client
@@ -45,6 +47,7 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v3
+
       - name: Cache Node Modules
         uses: actions/cache@v3
         with:
@@ -55,17 +58,12 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-node-
 
-jobs:
-  # Static Code Analysis
-  code-analysis:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
       - name: ESLint
         run: |
           cd client
           npm install
           npm run lint
+
       - name: SonarQube
         uses: SonarSource/sonarqube-scan-action@master
         env:
@@ -73,16 +71,18 @@ jobs:
 
   # Security Scanning
   security-scan:
-    runs-on: ubuntu-latest
     needs: code-analysis
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
+
       - name: Snyk Security Scan
         uses: snyk/actions/node@master
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         with:
           args: --severity-threshold=high
+
       - name: OWASP Dependency Check
         uses: dependency-check/dependency-check-action@v1
         with:
@@ -91,15 +91,17 @@ jobs:
 
   # Build and Test
   build-test:
-    runs-on: ubuntu-latest
     needs: security-scan
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
+
       - name: Build API
         run: |
           cd api
           npm install
           npm run build
+
       - name: Test API
         run: |
           cd api
@@ -107,11 +109,12 @@ jobs:
 
   # Container Security Scan
   container-scan:
-    runs-on: ubuntu-latest
     needs: security-scan
+    runs-on: ubuntu-latest
     continue-on-error: true
     steps:
       - uses: actions/checkout@v3
+
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
@@ -130,7 +133,6 @@ jobs:
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:api
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:client
 
-      # AWS Security Scanning
       - name: Run AWS Inspector
         uses: aws-actions/run-inspector@v1
         with:
@@ -138,7 +140,6 @@ jobs:
           ecr-repositories: |
             ${{ env.ECR_REPOSITORY }}
 
-      # AWS Security Hub Integration
       - name: Enable Security Hub
         uses: aws-actions/security-hub-enable@v1
         with:
@@ -150,7 +151,6 @@ jobs:
           aws-region: us-east-1
           findings-threshold: 10
 
-      # AWS Compliance Checks
       - name: Run AWS Config Rules
         uses: aws-actions/config-rules@v1
         with:
@@ -160,7 +160,6 @@ jobs:
             ecr-repository-lifecycle-policy-enabled
             ecr-repository-scanning-enabled
 
-      # AWS Security Best Practices
       - name: Run AWS Trusted Advisor
         uses: aws-actions/trusted-advisor@v1
         with:
@@ -170,7 +169,6 @@ jobs:
             ECR Repository Lifecycle Policy
             ECR Repository Scanning
 
-      # AWS Cost Optimization
       - name: Run AWS Cost Explorer
         uses: aws-actions/cost-explorer@v1
         with:
@@ -226,7 +224,6 @@ jobs:
     steps:
       - name: Collect Metrics
         run: |
-          # Collect build metrics and performance data
           echo "::set-output name=build_time::${{ github.event.processing_time }}"
           echo "::set-output name=artifact_size::$(du -sh api/ client/ | cut -f1 | paste -sd+ - | bc)"
 
@@ -265,13 +262,14 @@ jobs:
               return '#FF0000'
             } else {
               return '#FFFF00'
-            }
+
       - name: Docker Login
         uses: docker/login-action@v2
         with:
           registry: docker.io
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
+
       - name: Push Docker Images
         run: |
           docker push airbnb-api:latest
@@ -280,19 +278,19 @@ jobs:
   # Infrastructure as Code
   infrastructure:
     runs-on: ubuntu-latest
-    needs: containerize
+    needs: container-scan
     steps:
       - uses: actions/checkout@v3
+
       - name: Terraform Init
-        run: |
-          terraform init
+        run: terraform init
+
       - name: Terraform Plan
-        run: |
-          terraform plan
+        run: terraform plan
+
       - name: Terraform Apply
         if: github.ref == 'refs/heads/main'
-        run: |
-          terraform apply -auto-approve
+        run: terraform apply -auto-approve
 
   # Deployment
   deploy:
@@ -300,6 +298,7 @@ jobs:
     needs: infrastructure
     steps:
       - uses: actions/checkout@v3
+
       - name: Deploy to Kubernetes
         uses: Azure/k8s-deploy@v1
         with:
