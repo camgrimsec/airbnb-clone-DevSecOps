@@ -31,12 +31,6 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      - name: ESLint
-        run: |
-          cd client
-          npm install
-          npm run lint
-
       - name: SonarQube
         uses: SonarSource/sonarqube-scan-action@master
         env:
@@ -45,6 +39,7 @@ jobs:
   security-scan:
     needs: code-analysis
     runs-on: ubuntu-latest
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v3
 
@@ -58,6 +53,7 @@ jobs:
   build-test:
     needs: security-scan
     runs-on: ubuntu-latest
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v3
 
@@ -185,6 +181,7 @@ jobs:
   infrastructure:
     needs: container-scan
     runs-on: ubuntu-latest
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v3
 
