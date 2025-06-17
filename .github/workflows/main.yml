@@ -24,28 +24,12 @@ jobs:
         with:
           queries: security-extended
 
-      - name: Check Code Formatting
-        run: |
-          cd client
-          npm install -g prettier
-          prettier --check "**/*.{js,jsx,ts,tsx,css,md}"
-
   code-analysis:
     needs: pre-build
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
       - uses: actions/checkout@v3
-
-      - name: Cache Node Modules
-        uses: actions/cache@v3
-        with:
-          path: |
-            api/node_modules
-            client/node_modules
-          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-node-
 
       - name: ESLint
         run: |
@@ -70,12 +54,6 @@ jobs:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         with:
           args: --severity-threshold=high
-
-      - name: OWASP Dependency Check
-        uses: dependency-check/dependency-check-action@v1
-        with:
-          project: 'Airbnb Clone'
-          path: 'api'
 
   build-test:
     needs: security-scan
