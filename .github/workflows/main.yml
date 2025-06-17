@@ -115,33 +115,6 @@ jobs:
           aws-region: us-east-1
           findings-threshold: 10
 
-      - name: Run AWS Config Rules
-        uses: aws-actions/config-rules@v1
-        with:
-          aws-region: us-east-1
-          rules: |
-            ecr-image-scanning-enabled
-            ecr-repository-lifecycle-policy-enabled
-            ecr-repository-scanning-enabled
-
-      - name: Run AWS Trusted Advisor
-        uses: aws-actions/trusted-advisor@v1
-        with:
-          aws-region: us-east-1
-          checks: |
-            ECR Image Scanning
-            ECR Repository Lifecycle Policy
-            ECR Repository Scanning
-
-      - name: Run AWS Cost Explorer
-        uses: aws-actions/cost-explorer@v1
-        with:
-          aws-region: us-east-1
-          time-period: '30'
-          metrics: |
-            UnblendedCost
-            UsageQuantity
-
   aws-deploy:
     needs: container-scan
     runs-on: ubuntu-latest
